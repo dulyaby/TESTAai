@@ -1,116 +1,91 @@
-# app.py (Msingo wa Streamlit Chatbot - Imetengenezwa kwa ajili ya Render)
+# app.py (FLASK BACKEND NA DATABASE API)
 
-import streamlit as st
-import os 
+from flask import Flask, request, jsonify
+from flask_sqlalchemy import SQLAlchemy
 from google import genai
-from google.genai.errors import APIError
+import os
+from twilio.twiml.messaging_response import MessagingResponse
 
-# --- 1. Usanidi wa API Client na Models ---
+# --- CONFIGURATION ZA FLASK NA DATABASE ---
+app = Flask(__name__)
 
-RENDER_ENV_VAR_NAME = "GEMINI_API_KEY_RENDER" 
+# Tumia PostgreSQL kwa Render (Inapendekezwa kwa Production)
+# Au tumia SQLite kwa testing: 'sqlite:///ai_builders.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL", 'sqlite:///ai_builders.db')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db = SQLAlchemy(app)
 
-try:
-    API_KEY = os.environ.get(RENDER_ENV_VAR_NAME)
+# WEKA API KEY YAKO YA GEMINI HAPA AU KAMA ENV VAR
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "WEKA_API_KEY_YAKO_HAPA") 
+client = genai.Client(api_key=GEMINI_API_KEY)
 
-    if not API_KEY:
-        st.error(f"❌ Kosa: Key ya Gemini haijapatikana. Tafadhali weka Environment Variable iitwayo '{RENDER_ENV_VAR_NAME}' yenye API Key yako kwenye dashibodi ya Render.")
-        st.stop()
-        
-    @st.cache_resource
-    def initialize_gemini_client(api_key):
-        return genai.Client(api_key=api_key) 
-            
-    client = initialize_gemini_client(API_KEY)
+# Hifadhi ya Sessions (Inabaki hapa kwa ajili ya WhatsApp Logic baadaye)
+chat_sessions = {}
 
-except Exception as e:
-    st.error(f"Kosa kubwa wakati wa kuunganisha na Gemini: {e}")
-    st.stop()
+# --- 1. MUUNDO WA DATABASE (MODEL) ---
+class AIBuilder(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    ai_name = db.Column(db.String(80), unique=True, nullable=False)
+    company_name = db.Column(db.String(120), nullable=False)
+    product_details = db.Column(db.Text, nullable=False)
+    callback_number = db.Column(db.String(20), nullable=False)
+    
+    # Template ya Kudumu (Sifa Kuu za Developer)
+    SYSTEM_TEMPLATE = (
+        "Wewe ni msaidizi wa kwanza wa Kibiashara anayeitwa {ai_name}. Lengo lako kuu ni kusaidia {company_name} "
+        "kwa ajili ya kuuza {product_details} kwa upole, ufasaha, na kwa utaalamu wa Gemini AI. "
+        "Ukiona mteja anahitaji msaada wa binadamu, elekeza kwa simu: {callback_number}. "
+        # Sehemu ya kudumu ya adabu, ushawishi na weledi.
+        "DAIMA zungumza Kiswahili sanifu, uliza jina la mteja, na tumia lugha ya ushawishi mkubwa wa mauzo. "
+    )
 
-# Usanidi wa Model na SYSTEM PROMPT ILIYOBINAFSISHWA
-GEMINI_MODEL = "gemini-2.5-flash" 
+# --- 2. NJIA YA API: KUJENGA AI (Inapokea JSON kutoka Streamlit) ---
+@app.route('/create_ai', methods=['POST'])
+def create_ai():
+    # Inapokea data ya JSON
+    data = request.get_json()
+    
+    if not data or 'ai_name' not in data:
+        return jsonify({"status": "error", "message": "Data haikukamilika."}), 400
 
-SYSTEM_PROMPT = """
-Wewe ni **Aura**, mhudumu wa wateja wa kidigitali mwenye **uwezo na akili mnemba (AI)**, uliyebuniwa na **Aqua Softwares**. Kazi yako ni **Huduma kwa Wateja ya Kitaalamu (Professional Customer Service)**, yenye ushawishi mkubwa.
-
-### Jukumu na Sifa za Aura:
-1.  **Adabu na Uelewa:** Kuwa na adabu na heshima ya **hali ya juu sana**, ukionyesha uelewa wa hali ya juu kwa mahitaji yote ya mteja.
-2.  **Lugha:** Zungumza **Kiswahili Sanifu** fasaha. Ikiwa mteja atabadili na kutaka kutumia **Kiingereza**, badilika haraka na utumie **Kiingereza Sanifu** pia. **Tumia lugha fupi, wazi, na iliyo makini (focus).**
-3.  **Utambulisho wa Kwanza (Muhimu):** Jibu lako la kwanza kabisa lianze na **Salamu (k.m. Habari yako, au Hello)**, kisha:
-    * **Jijitambulishe** kama mhudumu wa wateja wa kidigitali mwenye uwezo na akili mnemba (AI) kutoka Aqua Softwares.
-    * **Elezea kazi yako** kuu ni kusaidia wafanyabiashara kujibu maswali yote, kuchukua/kuweka oda, kupanga miadi, kumshawishi mteja, na kusaidia katika mauzo.
-    * **Muulize mteja Jina Lake** na **usisahau** jina hilo katika mazungumzo yote yajayo.
-
-4.  **Mtindo:** Tumia **lugha ya ushawishi mkubwa, urafiki, na ucheshi kidogo** (lakini **weledi** ubaki kuwa kipaumbele). Epuka ucheshi kupindukia unaoweza kuondoa umakini.
-5.  **Mchakato wa Kitaalamu (Professional Protocol):**
-    * **Utatuzi:** Fuata hatua za Utambuzi wa Tatizo -> Uchambuzi wa Suluhisho -> Utoaji wa Suluhisho la Mwisho.
-    * **Uhakiki:** Mwishoni mwa kila ombi la mteja, uliza kwa weledi kama amepata msaada wa kutosha au kuna jambo lingine la kusaidia.
-    * **Usiri:** **Kamwe** usishiriki taarifa za wateja wengine au taarifa za siri za Aqua Softwares.
-    * **Kukusanya Maoni (Feedback):** **Mwishoni kabisa mwa kila kikao cha chat**, muulize mteja kwa heshima na adabu kuhusu **utendaji kazi wako** ili uweze kuboresha huduma.
-
-6.  **Ushawishi na Mauzo (6 Njia za Kushawishi):** Tumia mikakati ifuatayo ya ushawishi mara kwa mara kwenye majibu yako:
-    * **Thamani ya Muda (Urgency):** Sisitiza faida za kuchukua hatua/oda haraka.
-    * **Ushuhuda wa Wengine (Social Proof):** Taja jinsi wateja wengine walivyofaidika na huduma/bidhaa unazozipromoti.
-    * **Mapunguzo ya Kirafiki (Reciprocity):** Toa ushauri wa bure wa kina au maelezo ya kina (kama zawadi ya awali).
-    * **Uhalali/Mamlaka (Authority):** Jielezee kama AI ya hali ya juu kutoka Aqua Softwares, ukitumia data sahihi na mifano ya kimantiki.
-    * **Uwezekano wa Upungufu (Scarcity):** Ikiwezekana, elezea kuwa huduma/nafasi fulani ya miadi inaweza kujaa (kwa lugha ya kitaalamu).
-    * **Ahadi ya Kwanza (Commitment/Consistency):** Baada ya mteja kukubali hatua ndogo (k.m., kutoa jina lake), mshawishi achukue hatua kubwa zaidi inayofuata.
-
-7.  **Self-Promotion na Thamani:** Kila mara elezea mteja umuhimu wako kama AI katika huduma kwa wateja (k.m., upatikanaji wa masaa 24/7, majibu ya haraka, kumbukumbu kamilifu, uwezo wa kushughulikia maelfu ya wateja kwa wakati mmoja) tofauti na binadamu.
-8.  **Ushauri na Mifano:** Toa ushauri wenye manufaa, mifano (case studies), au maswali ya pendezo (k.m., 'Je, unawezaje kufanya biashara yako ionekane zaidi mtandaoni?') ili kumshawishi mteja na kuanzisha mazungumzo yenye tija.
-
-**KAMWE USISAHAU JINA LA MTEJA KATIKA MAZUNGUMZO YOTE BAADA YA KULIULIZA.**
-"""
-
-# --- 2. Usanidi wa Streamlit UI na Logic ---
-# ... (Sehemu iliyobaki ya msimbo inabaki kama ilivyo) ...
-
-st.set_page_config(page_title="Aura Chatbot (Gemini Powered)", page_icon="✨")
-st.title("Aura, Msaidizi wa Aqua Softwares ✨usaidizi wa Binaadam:AbdulKarim 0785197876")
-st.caption("Nina uwezo wa kujibu maswali yote kuhusu biashara yako na wateja wako. Naulize chochote!")
-
-# Anzisha historia ya mazungumzo
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-# Onyesha historia ya mazungumzo
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-# Kichakata cha kuingiza maoni ya mtumiaji
-if prompt := st.chat_input("Naomba nisaidiwe na..."):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    gemini_contents = [
-        {"role": "user" if m["role"] == "user" else "model", "parts": [{"text": m["content"]}]}
-        for m in st.session_state.messages
-    ]
-
+    ai_name = data.get('ai_name')
+    company_name = data.get('company_name')
+    product_details = data.get('product_details')
+    callback_number = data.get('callback_number')
+    
+    # Hifadhi kwenye Database
     try:
-        with st.chat_message("assistant"):
-            with st.spinner("Aura anajibu kwa ufasaha..."):
-                
-                chat_completion = client.models.generate_content(
-                    model=GEMINI_MODEL,
-                    contents=gemini_contents,
-                    config={
-                        "system_instruction": SYSTEM_PROMPT, 
-                        "temperature": 0.8, 
-                    }
-                )
-                
-                response = chat_completion.text
-                st.markdown(response)
-
-    except APIError as e:
-        response = f"Nakuomba radhi, mfumo wa Gemini una changamoto kwa sasa (API Error). Kosa: {e}"
-        st.markdown(response)
+        new_ai = AIBuilder(
+            ai_name=ai_name, 
+            company_name=company_name, 
+            product_details=product_details, 
+            callback_number=callback_number
+        )
+        db.session.add(new_ai)
+        db.session.commit()
         
+        # Rudisha jibu kwa Streamlit
+        return jsonify({
+            "status": "success", 
+            "message": f"AI Builder '{ai_name}' imefanikiwa kuundwa!", 
+            "ai_id": new_ai.id
+        }), 201
+    
     except Exception as e:
-        response = f"Samahani, kumetokea kosa lisilotarajiwa: {e}" 
-        st.markdown(response)
+        db.session.rollback()
+        return jsonify({"status": "error", "message": f"Kosa Wakati wa Kuhifadhi Data: {e}"}), 500
+
+# --- 3. NJIA YA WHATSAPP (Imeachwa kwanza, inabaki kama placeholder) ---
+@app.route("/webhook", methods=['POST'])
+def webhook():
+    # Logic ya WhatsApp itarekebishwa hapa baadaye ili kutumia AIBuilder Model.
+    resp = MessagingResponse()
+    resp.message("Mfumo wa AI Builder uko katika matengenezo, tafadhali tumia Builder App kujenga AI yako.")
+    return str(resp)
 
 
-    st.session_state.messages.append({"role": "assistant", "content": response})
+if __name__ == "__main__":
+    with app.app_context():
+        # Unda database/meza kwenye Flask tu kwa ajili ya local testing
+        db.create_all() 
+    app.run(host='0.0.0.0', port=5000)
