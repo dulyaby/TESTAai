@@ -1,2 +1,5 @@
 streamlit
 google-genai
+gunicorn
+twilio
+Flask-SQLAIchemy
