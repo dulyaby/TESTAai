@@ -1,5 +1,5 @@
-streamlit
+Flask
 google-genai
 gunicorn
 twilio
-Flask-SQLAIchemy
+Flask-SQLAlchemy
