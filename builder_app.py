@@ -7,7 +7,7 @@ import os
 # HII LAZIMA IWE ANWANI YA RENDER YA APP YAKO LIVE
 # BADILISHA HII NA URL HALISI YA RENDER YA FLASK BACKEND YAKO
 # HII INAWEZA KUWA TOFAUTI NA URL YA STREAMLIT YENYEWE
-RENDER_API_URL = "WEKA_URL_YA_RENDER_FLASK_API_HAPA" # <--- BADILISHA HII
+RENDER_API_URL = "https://testaai.onrender.com" # <--- BADILISHA HII
 # Mfano: "https://your-flask-api.onrender.com"
 
 st.set_page_config(page_title="Aura No-Code AI Builder", layout="centered")
