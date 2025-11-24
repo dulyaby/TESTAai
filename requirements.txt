@@ -6,3 +6,4 @@ Flask-SQLAlchemy
 requests
 streamlit
 psycopg2-binary
+Flask-CORS
