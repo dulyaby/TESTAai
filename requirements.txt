@@ -3,4 +3,6 @@ google-genai
 gunicorn
 twilio
 Flask-SQLAlchemy
+requests
+streamlit
 psycopg2-binary
