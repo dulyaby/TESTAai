@@ -5,5 +5,5 @@ twilio
 Flask-SQLAlchemy
 requests
 streamlit
-psycopg2-binary
+psycopg2
 Flask-CORS
