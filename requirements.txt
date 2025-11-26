@@ -1,9 +1,5 @@
-Flask
-google-genai
-gunicorn
-twilio
-Flask-SQLAlchemy
-requests
 streamlit
-psycopg2
-Flask-CORS
+google-genai
+sqlalchemy
+requests
+Flask-SQLAlchemy
