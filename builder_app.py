@@ -1,7 +1,6 @@
 import os
 import streamlit as st
 from google import genai
-# Kumbuka kuondoa Flask-SQLAlchemy kwenye requirements.txt na uweke sqlalchemy pekee kama hukuondoa
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -71,7 +70,6 @@ if 'selected_ai_prompt' not in st.session_state:
 
 # --- KUJENGA FORM ---
 with st.form("ai_builder_form"):
-    # ... (Sehemu zote za fomu zilizopita) ...
     st.markdown("### Taarifa za Biashara")
     col1, col2 = st.columns(2)
     business_name = col1.text_input("Jina la Biashara", placeholder="Mfano: Mwananchi Shop")
@@ -118,15 +116,19 @@ if submit_button:
                 saved_ai_id = new_ai.id  
                 
             st.success("🎉 AI Builder imetengenezwa na kuhifadhiwa kwa mafanikio!")
-            st.session_state.selected_ai_prompt = generated_prompt # Chagua Prompt mpya kwa ajili ya chat
-            st.session_state.chat_session = None # Reset chat
+            # Weka prompt mpya kama AI iliyochaguliwa kwa ajili ya kuchat
+            st.session_state.selected_ai_prompt = generated_prompt 
+            st.session_state.chat_session = None # Reset chat session
+            st.session_state.chat_history = [] # Futa historia
+            st.session_state.last_saved_name = f"ID #{saved_ai_id}: {business_name} ({ai_role[:20]}...)" # Hifadhi jina
+
             
             with st.expander("Ona AI Prompt Iliyotengenezwa na Gemini"):
                 st.code(generated_prompt, language='markdown')
 
             st.markdown(f"""
             ---
-            **ID ya Database:** **#{saved_ai_id}** | **Sasa unaweza kuanzisha mazungumzo naye hapa chini.**
+            **ID ya Database:** **#{saved_ai_id}** | **Sasa nenda chini uanze mazungumzo naye.**
             """)
             
         except Exception as e:
@@ -134,7 +136,9 @@ if submit_button:
             st.stop()
 
 
-# ----------------- DISPLAY SAVED AIS AND CHAT SECTION -----------------
+# ----------------------------------------------
+# KIPENGELE KIKUU CHA KUJARIBU AI (TEST CHAT)
+# ----------------------------------------------
 st.markdown("---")
 st.header("💬 Jaribu AI Yako Sasa")
 
@@ -144,58 +148,72 @@ try:
     with SessionLocal() as session:
         saved_ais = session.query(AIBuilder).order_by(AIBuilder.creation_date.desc()).all()
         for ai in saved_ais:
-            ai_options[f"ID #{ai.id}: {ai.business_name} ({ai.ai_role[:30]}...)"] = ai.ai_prompt
-except Exception as e:
-    st.warning("Imeshindwa kupata AI zilizohifadhiwa.")
-    
+            # Unda dictionary ya kuchagua
+            option_name = f"ID #{ai.id}: {ai.business_name} ({ai.ai_role[:30]}...)"
+            ai_options[option_name] = ai.ai_prompt
+except Exception:
+    pass # Acha iendelee hata kama database imeshindwa
 
 # 1. Selector ya AI
-selected_ai_name = st.selectbox(
-    "Chagua AI unayetaka kuchat naye:", 
-    list(ai_options.keys()), 
-    key='ai_selector'
-)
+# Chagua default value kulingana na AI iliyoundwa mwisho
+default_index = 0
+if 'last_saved_name' in st.session_state and st.session_state.last_saved_name in ai_options:
+    default_index = list(ai_options.keys()).index(st.session_state.last_saved_name)
+elif len(ai_options) > 0:
+    default_index = 0
+else:
+    st.info("Tafadhali unda AI kwanza kwa kujaza fomu hapo juu ili kuanzisha mazungumzo.")
 
-if selected_ai_name:
-    # Set the selected prompt for the chat
-    selected_prompt = ai_options[selected_ai_name]
-    
-    # Kuanzisha Chat Session mpya na System Prompt
-    if st.session_state.chat_session is None or st.session_state.selected_ai_prompt != selected_prompt:
+if len(ai_options) > 0:
+    selected_ai_name = st.selectbox(
+        "Chagua AI unayetaka kuchat naye:", 
+        list(ai_options.keys()), 
+        key='ai_selector',
+        index=default_index
+    )
+
+    if selected_ai_name:
+        # Set the selected prompt for the chat
+        selected_prompt = ai_options[selected_ai_name]
         
-        st.session_state.selected_ai_prompt = selected_prompt
-        # Tengeneza chat mpya yenye system instruction (AI Prompt yako)
-        st.session_state.chat_session = client.chats.create(
-            model='gemini-2.5-flash',
-            system_instruction=selected_prompt # Hii ndiyo AI Prompt yako!
-        )
-        st.session_state.chat_history = []
-        st.info(f"Chat Session mpya imeanzishwa na AI: {selected_ai_name}")
-
-    # 2. Onyesha Historia ya Chat
-    for role, text in st.session_state.chat_history:
-        with st.chat_message(role):
-            st.markdown(text)
-
-    # 3. Kuingiza Ujumbe (Input)
-    user_prompt = st.chat_input("Tuma ujumbe kwa AI yako...")
-    
-    if user_prompt:
-        # Onyesha ujumbe wa user
-        with st.chat_message("user"):
-            st.markdown(user_prompt)
-        
-        # Tuma ujumbe kwa Gemini
-        try:
-            response = st.session_state.chat_session.send_message(user_prompt)
+        # Kuanzisha Chat Session mpya na System Prompt
+        # Hii inafanya reset kila ukibadilisha AI kwenye selectbox
+        if st.session_state.chat_session is None or st.session_state.selected_ai_prompt != selected_prompt:
             
-            # Onyesha jibu la AI
-            with st.chat_message("assistant"):
-                st.markdown(response.text)
+            st.session_state.selected_ai_prompt = selected_prompt
+            # Tengeneza chat mpya yenye system instruction (AI Prompt yako)
+            st.session_state.chat_session = client.chats.create(
+                model='gemini-2.5-flash',
+                system_instruction=selected_prompt # Hii ndiyo AI Prompt yako!
+            )
+            # Futa historia tu pale session inapobadilika
+            st.session_state.chat_history = [] 
+            st.info(f"Chat Session mpya imeanzishwa na AI: **{selected_ai_name}**")
+
+        # 2. Onyesha Historia ya Chat
+        for role, text in st.session_state.chat_history:
+            with st.chat_message(role):
+                st.markdown(text)
+
+        # 3. Kuingiza Ujumbe (Input)
+        user_prompt = st.chat_input("Tuma ujumbe kwa AI yako...")
+        
+        if user_prompt:
+            # Onyesha ujumbe wa user
+            with st.chat_message("user"):
+                st.markdown(user_prompt)
+            
+            # Tuma ujumbe kwa Gemini
+            try:
+                response = st.session_state.chat_session.send_message(user_prompt)
                 
-            # Hifadhi Historia
-            st.session_state.chat_history.append(("user", user_prompt))
-            st.session_state.chat_history.append(("assistant", response.text))
-            
-        except Exception as e:
-            st.error(f"Kosa la Gemini Chat: {e}")
+                # Onyesha jibu la AI
+                with st.chat_message("assistant"):
+                    st.markdown(response.text)
+                    
+                # Hifadhi Historia
+                st.session_state.chat_history.append(("user", user_prompt))
+                st.session_state.chat_history.append(("assistant", response.text))
+                
+            except Exception as e:
+                st.error(f"Kosa la Gemini Chat: {e}")
