@@ -1,99 +1,159 @@
-# builder_app.py (STREAMLIT NO-CODE BUILDER)
-import streamlit as st
-import requests
-import json
 import os
+import streamlit as st
+from google import genai
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+import datetime
+from sqlalchemy.exc import OperationalError
 
-# HII LAZIMA IWE ANWANI YA RENDER YA APP YAKO LIVE
-# BADILISHA HII NA URL HALISI YA RENDER YA FLASK BACKEND YAKO
-# HII INAWEZA KUWA TOFAUTI NA URL YA STREAMLIT YENYEWE
-RENDER_API_URL = "https://testaai.onrender.com" # <--- BADILISHA HII
-# Mfano: "https://your-flask-api.onrender.com"
+# ----------------- CONFIGURATION -----------------
+# Badilisha muunganisho wa DB: Tumia SQLite kama faili moja.
+# Hii inarekebisha kosa la psycopg2.
+# Kwa kutumia Render, unaweza pia kuweka DATABASE_URL ya PostgreSQL hapa kwa urahisi zaidi.
+# Lakini kwa unyenyekevu, tunatumia SQLite.
+SQLALCHEMY_DATABASE_URI = "sqlite:///ai_builder.db"
+# Unaweza kutumia Environment Variable uliyoweka hapo awali hivi:
+# database_url = os.getenv("DATABASE_URL") 
+# if database_url:
+#    SQLALCHEMY_DATABASE_URI = database_url.replace("postgres://", "postgresql+psycopg2://")
+# else:
+#    SQLALCHEMY_DATABASE_URI = "sqlite:///ai_builder.db" # Fallback
 
-st.set_page_config(page_title="Aura No-Code AI Builder", layout="centered")
-st.title("🛠️ Aura No-Code AI Builder")
-st.markdown("Jaza maelezo haya machache ili mfumo wetu wa Gemini ukutengenezee AI ya biashara yako. **Sifa za heshima/adabu ni za kudumu!**")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+if not GEMINI_API_KEY:
+    st.error("GEMINI_API_KEY haipatikani kwenye Environment Variables. Tafadhali weka 'GEMINI_API_KEY'.")
+    st.stop()
+    
+# ----------------- DATABASE SETUP -----------------
+Base = declarative_base()
+
+class AIBuilder(Base):
+    __tablename__ = 'aibuilder'
+    id = Column(Integer, primary_key=True)
+    business_name = Column(String(100), nullable=False)
+    business_field = Column(String(100), nullable=False)
+    ai_role = Column(String(255), nullable=False)
+    ai_prompt = Column(Text, nullable=False)
+    creation_date = Column(DateTime, default=datetime.datetime.now)
+
+# Initialize Engine na Session
+engine = create_engine(SQLALCHEMY_DATABASE_URI)
+Base.metadata.create_all(engine)
+Session = sessionmaker(bind=engine)
+
+# Initialize Gemini Client
+try:
+    client = genai.Client(api_key=GEMINI_API_KEY)
+except Exception as e:
+    st.error(f"Imeshindwa kuunganisha Gemini Client: {e}")
+    st.stop()
 
 
-# Hii inatumika kuhifadhi AI ID iliyofanikiwa kuundwa
-if 'latest_ai_id' not in st.session_state:
-    st.session_state.latest_ai_id = None
+# ----------------- HELPER FUNCTIONS -----------------
+def generate_ai_role_prompt(data):
+    """Hutengeneza AI System Prompt kwa kutumia Gemini"""
+    prompt = (
+        f"You are building an AI persona for a business named '{data['business_name']}' "
+        f"which operates in the field of '{data['business_field']}'. "
+        f"Your main role is: {data['ai_role']}. "
+        f"The primary goal of this AI is to communicate with customers of a {data['business_field']} business."
+        f"Generate a detailed system prompt for this AI that includes its persona, rules, and conversational tone."
+    )
+    
+    response = client.models.generate_content(
+        model='gemini-2.5-flash',
+        contents=prompt
+    )
+    return response.text
 
-# --- Fomu ya Kuunda AI ---
+# ----------------- STREAMLIT UI -----------------
+
+st.set_page_config(page_title="Aura AI Builder", layout="wide")
+
+st.title("✨ Aura AI Builder - Jenga AI Yako Kirahisi")
+st.subheader("Jaza fomu hapa chini ili kujenga AI persona ya biashara yako. Data inahifadhiwa ndani.")
+
 with st.form("ai_builder_form"):
-    st.subheader("Maelezo ya Biashara Yako")
-    ai_name = st.text_input("1. Jina la AI Yako (Mfano: Anna Bot):", max_chars=80)
-    company_name = st.text_input("2. Jina la Kampuni/Biashara Yako:")
-    # Hii ndio itatumika kama maarifa ya RAG
-    product_details = st.text_area("3. Bidhaa au Huduma Zako (TAARIFA MUHIMU za FAQ na Bei):")
-    callback_number = st.text_input("4. Namba ya Simu ya Kuelekeza Wateja (Mfano: 07XX XXX XXX):")
+    st.markdown("### Taarifa za Biashara")
+    col1, col2 = st.columns(2)
     
-    submitted = st.form_submit_button("Jenga AI Yangu Sasa!")
+    business_name = col1.text_input("Jina la Biashara", placeholder="Mfano: Mwananchi Shop")
+    business_field = col2.text_input("Eneo la Biashara (Field)", placeholder="Mfano: Ujenzi, Vyakula, Huduma za Kisheria")
 
+    st.markdown("### Jukumu la AI (AI Role)")
+    ai_role = st.text_area("Lengo Kuu la AI Hii", 
+                            placeholder="Mfano: Kuwa msaidizi wa mauzo, Kujibu maswali ya wateja kuhusu bidhaa, Kuelekeza wateja kwa watu sahihi.", 
+                            height=100)
 
-if submitted:
-    # 1. Kusanya data
-    data = {
-        "ai_name": ai_name,
-        "company_name": company_name,
-        "product_details": product_details,
-        "callback_number": callback_number
-    }
+    st.markdown("### Mawasiliano")
+    contact_phone = st.text_input("Namba ya Simu ya Kuelekeza Wateja (Mfano: 07XX XXX XXX)", placeholder="07XXXXXXX")
 
-    # 2. Tuma data kama JSON kwa Render API
-    try:
-        st.info("⚡️ Tunatuma maombi kwenye server ya Render...")
-        # Tumia /create_ai endpoint ya Flask API
-        response = requests.post(f"{RENDER_API_URL}/create_ai", json=data) 
+    submit_button = st.form_submit_button("Jenga AI Yangu Sasa!")
+
+if submit_button:
+    if not all([business_name, business_field, ai_role, contact_phone]):
+        st.error("Tafadhali jaza sehemu zote zilizo wazi kabla ya kuendelea.")
+    else:
+        st.info("⚡ Inatengeneza AI Prompt kwa kutumia Gemini...")
         
-        if response.status_code == 201:
-            st.balloons()
-            st.success(f"🎉 Imefanikiwa! {response.json().get('message')} ID: {response.json().get('ai_id')}")
-            # Hifadhi ID na SYSTEM PROMPT kwa ajili ya Testing
-            st.session_state.latest_ai_id = response.json().get('ai_id')
-            st.session_state.system_prompt = response.json().get('system_prompt_sample')
-            st.markdown(f"**Mfumo Umefunzwa na Maelezo haya:**\n> {st.session_state.system_prompt}")
+        # Data ya kutuma
+        form_data = {
+            "business_name": business_name,
+            "business_field": business_field,
+            "ai_role": ai_role,
+            "contact_phone": contact_phone
+        }
 
-        else:
-            st.error(f"❌ Kosa la Server: {response.status_code}. Angalia logs za Flask API.")
-            st.json(response.json())
-            st.session_state.latest_ai_id = None
+        try:
+            # Piga simu moja kwa moja badala ya kutuma POST request nje
+            generated_prompt = generate_ai_role_prompt(form_data)
 
-    except requests.exceptions.RequestException as e:
-        st.error(f"❌ Kosa la Muunganisho. Hakikisha URL ya Render API ({RENDER_API_URL}) ni sahihi na iko Online.")
+            # Hifadhi kwenye Database (SQLite)
+            session = Session()
+            new_ai = AIBuilder(
+                business_name=business_name,
+                business_field=business_field,
+                ai_role=ai_role,
+                ai_prompt=generated_prompt
+            )
+            session.add(new_ai)
+            session.commit()
+            session.close()
 
-
-# ----------------------------------------------------
-# --- SEHEMU YA KUJARIBU AI YILIFANYA KAZI ---
-# ----------------------------------------------------
-
-if st.session_state.latest_ai_id:
-    st.markdown("---")
-    st.subheader(f"🗣️ Jaribu AI Yako Sasa (ID: {st.session_state.latest_ai_id})")
-    
-    test_prompt = st.text_input("Uliza swali lolote la biashara:", key="test_prompt")
-    
-    if st.button("Tuma Swali kwa AI"):
-        if test_prompt:
-            chat_url = f"{RENDER_API_URL}/chat"
-            st.info("⚡️ AI yako mpya inajibu...")
+            st.success("🎉 AI Builder imetengenezwa na kuhifadhiwa kwa mafanikio!")
             
-            chat_data = {
-                "ai_id": st.session_state.latest_ai_id,
-                "prompt": test_prompt
-            }
+            with st.expander("Ona AI Prompt Iliyotengenezwa na Gemini"):
+                st.code(generated_prompt, language='markdown')
+
+            st.markdown(f"""
+            ---
+            **Hatua Inayofuata:** Tumia prompt hii kuweka AI yako kwenye jukwaa la Gumzo (Chatbot) unalolipenda.
+            **ID ya Database:** **#{new_ai.id}**
+            """)
             
-            try:
-                chat_response = requests.post(chat_url, json=chat_data)
-                
-                if chat_response.status_code == 200:
-                    ai_name = chat_response.json().get('ai_name')
-                    response_text = chat_response.json().get('response')
-                    st.success(f"**{ai_name} Anajibu:**")
-                    st.markdown(response_text)
-                else:
-                    st.error(f"❌ Kosa la AI Chat: {chat_response.status_code}. Angalia logs za Flask API.")
-                    st.json(chat_response.json())
-                    
-            except requests.exceptions.RequestException as e:
-                st.error(f"❌ Kosa la Muunganisho. Tafadhali hakikisha Flask API iko Live.")
+        except OperationalError as e:
+            st.error(f"🚨 Kosa la Database: Imeshindwa kuunganisha. Angalia logs. Details: {e}")
+        except Exception as e:
+            st.error(f"🚨 Kosa la Kujenga AI: Muunganisho wa Gemini haukufanikiwa. Angalia Logs. Details: {e}")
+            st.stop()
+
+# ----------------- DISPLAY SAVED AIS -----------------
+st.sidebar.title("AI Zilizohifadhiwa")
+
+try:
+    session = Session()
+    saved_ais = session.query(AIBuilder).order_by(AIBuilder.creation_date.desc()).all()
+    session.close()
+
+    if saved_ais:
+        st.sidebar.info(f"AI {len(saved_ais)} zimehifadhiwa.")
+        for ai in saved_ais:
+            st.sidebar.markdown(f"**{ai.business_name}** ({ai.business_field})")
+            st.sidebar.markdown(f"*Role:* {ai.ai_role[:30]}...")
+            st.sidebar.markdown("---")
+    else:
+        st.sidebar.markdown("Bado hakuna AI zilizohifadhiwa.")
+except Exception as e:
+    st.sidebar.warning("Imeshindwa kuonyesha AI zilizohifadhiwa. DB error.")
