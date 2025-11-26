@@ -55,7 +55,6 @@ def generate_ai_role_prompt(data):
         f"Generate a detailed system prompt for this AI that includes its persona, rules, and conversational tone."
     )
     
-    # Huu ni mfumo wa kawaida, hauhitaji config ya mfumo
     response = client.models.generate_content(
         model='gemini-2.5-flash',
         contents=prompt
@@ -67,7 +66,7 @@ def generate_ai_role_prompt(data):
 st.set_page_config(page_title="Aura AI Builder", layout="wide")
 
 st.title("✨ Aura AI Builder - Jenga AI Yako Kirahisi")
-st.subheader("Jaza fomu hapa chini ili kujenga AI persona ya biashara yako. Data inahifadhiwa ndani.")
+st.subheader("Jaza fomu hapo juu ili kujenga AI persona ya biashara yako, kisha chat naye chini.")
 
 # Hii inasaidia kufanya refresh ya chat session
 if 'chat_session' not in st.session_state:
@@ -100,7 +99,7 @@ if submit_button:
     if not all([business_name, business_field, ai_role, contact_info]):
         st.error("Tafadhali jaza sehemu zote zilizo wazi kabla ya kuendelea.")
     else:
-        st.info("⚡ Inatengeneza AI Prompt kwa kutumia Gemini...")
+        st.info("⚡ Inatengeneza AI Prompt kwa kutumia AURA...")
         
         form_data = {
             "business_name": business_name,
@@ -142,7 +141,6 @@ if submit_button:
             
         except Exception as e:
             st.error(f"🚨 Kosa la Kujenga/Kuhifadhi AI: {e}")
-            # Futa hali ya sasa ili Streamlit iendelee
             st.session_state.chat_session = None
             st.stop()
 
@@ -187,8 +185,6 @@ if len(ai_options) > 0:
             
             st.session_state.selected_ai_prompt = selected_prompt
             
-            # --- HII NDIO SEHEMU ILIYOREKEBISHWA KWA AJILI YA SYSTEM INSTRUCTION ---
-            
             # Unda Configuration kwa ajili ya System Instruction
             config = types.GenerateContentConfig(
                 system_instruction=selected_prompt
@@ -197,7 +193,7 @@ if len(ai_options) > 0:
             # Anzisha Chat kwa kutumia config
             st.session_state.chat_session = client.chats.create(
                 model='gemini-2.5-flash',
-                config=config # Tunatuma configuration badala ya system_instruction moja kwa moja
+                config=config 
             )
             
             st.session_state.chat_history = [] 
@@ -218,7 +214,7 @@ if len(ai_options) > 0:
             
             # Tuma ujumbe kwa Gemini
             try:
-                # Hakikisha tumetumia chat session iliyoundwa vizuri
+                # Tuma ujumbe kwa chat session iliyopo
                 response = st.session_state.chat_session.send_message(user_prompt)
                 
                 # Onyesha jibu la AI
@@ -230,4 +226,10 @@ if len(ai_options) > 0:
                 st.session_state.chat_history.append(("assistant", response.text))
                 
             except Exception as e:
-                st.error(f"🚨 Kosa la Gemini Chat: {e}")
+                error_message = str(e)
+                st.error(f"🚨 Kosa la Gemini Chat: {error_message}. Tafadhali jaribu ku-refresh ukurasa au chagua tena AI.")
+                
+                # Ulinzi wa Session Reset (Kama chat inasema imefungwa, fungua tena)
+                if "renewed or restarted" in error_message or "session" in error_message:
+                    st.warning("Chat Session imefungwa. Tafadhali chagua tena AI kutoka kwenye dropdown na utume ujumbe upya.")
+                    st.session_state.chat_session = None
