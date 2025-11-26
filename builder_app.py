@@ -1,6 +1,5 @@
 import os
 import streamlit as st
-# Imports za Gemini zilizorekebishwa
 from google import genai
 from google.genai import types 
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
@@ -61,6 +60,21 @@ def generate_ai_role_prompt(data):
     )
     return response.text
 
+def initialize_chat_session(system_prompt):
+    """Huanzisha Chat Session mpya na System Instruction"""
+    try:
+        config = types.GenerateContentConfig(
+            system_instruction=system_prompt
+        )
+        chat = client.chats.create(
+            model='gemini-2.5-flash',
+            config=config 
+        )
+        return chat
+    except Exception as e:
+        st.error(f"🚨 Imeshindwa kuunda Chat Session: {e}")
+        return None
+
 # ----------------- STREAMLIT UI -----------------
 
 st.set_page_config(page_title="Aura AI Builder", layout="wide")
@@ -68,7 +82,7 @@ st.set_page_config(page_title="Aura AI Builder", layout="wide")
 st.title("✨ Aura AI Builder - Jenga AI Yako Kirahisi")
 st.subheader("Jaza fomu hapo juu ili kujenga AI persona ya biashara yako, kisha chat naye chini.")
 
-# Hii inasaidia kufanya refresh ya chat session
+# Hali za Session (State Management)
 if 'chat_session' not in st.session_state:
     st.session_state.chat_session = None
 if 'chat_history' not in st.session_state:
@@ -99,7 +113,7 @@ if submit_button:
     if not all([business_name, business_field, ai_role, contact_info]):
         st.error("Tafadhali jaza sehemu zote zilizo wazi kabla ya kuendelea.")
     else:
-        st.info("⚡ Inatengeneza AI Prompt kwa kutumia AURA...")
+        st.info("⚡ Inatengeneza AI Prompt kwa kutumia Gemini...")
         
         form_data = {
             "business_name": business_name,
@@ -127,7 +141,7 @@ if submit_button:
                 
             st.success("🎉 AI Builder imetengenezwa na kuhifadhiwa kwa mafanikio!")
             st.session_state.selected_ai_prompt = generated_prompt 
-            st.session_state.chat_session = None 
+            st.session_state.chat_session = None # Funga session ya zamani
             st.session_state.chat_history = [] 
             st.session_state.last_saved_name = f"ID #{saved_ai_id}: {business_name} ({ai_role[:20]}...)" 
             
@@ -180,24 +194,21 @@ if len(ai_options) > 0:
     if selected_ai_name:
         selected_prompt = ai_options[selected_ai_name]
         
-        # Kuanzisha Chat Session mpya na System Prompt
+        # Kuanzisha Chat Session mpya na System Prompt (AU kuhakikisha session iliyopo inalingana)
+        # Session inafunguliwa upya tu kama imefungwa au prompt imebadilika
         if st.session_state.chat_session is None or st.session_state.selected_ai_prompt != selected_prompt:
             
             st.session_state.selected_ai_prompt = selected_prompt
             
-            # Unda Configuration kwa ajili ya System Instruction
-            config = types.GenerateContentConfig(
-                system_instruction=selected_prompt
-            )
+            # Tumia function mpya kuanzisha chat
+            st.session_state.chat_session = initialize_chat_session(selected_prompt)
             
-            # Anzisha Chat kwa kutumia config
-            st.session_state.chat_session = client.chats.create(
-                model='gemini-2.5-flash',
-                config=config 
-            )
-            
-            st.session_state.chat_history = [] 
-            st.info(f"Chat Session mpya imeanzishwa na AI: **{selected_ai_name}**")
+            if st.session_state.chat_session:
+                st.session_state.chat_history = [] 
+                st.info(f"Chat Session mpya imeanzishwa na AI: **{selected_ai_name}**")
+            else:
+                st.session_state.chat_session = None
+
 
         # 2. Onyesha Historia ya Chat
         for role, text in st.session_state.chat_history:
@@ -208,13 +219,17 @@ if len(ai_options) > 0:
         user_prompt = st.chat_input("Tuma ujumbe kwa AI yako...")
         
         if user_prompt:
+            # Check kama chat session ipo kabla ya kutuma ujumbe
+            if st.session_state.chat_session is None:
+                st.error("🚨 Chat Session haijaanzishwa. Tafadhali chagua tena AI kutoka kwenye dropdown.")
+                st.stop()
+                
             # Onyesha ujumbe wa user
             with st.chat_message("user"):
                 st.markdown(user_prompt)
             
             # Tuma ujumbe kwa Gemini
             try:
-                # Tuma ujumbe kwa chat session iliyopo
                 response = st.session_state.chat_session.send_message(user_prompt)
                 
                 # Onyesha jibu la AI
@@ -227,9 +242,9 @@ if len(ai_options) > 0:
                 
             except Exception as e:
                 error_message = str(e)
-                st.error(f"🚨 Kosa la Gemini Chat: {error_message}. Tafadhali jaribu ku-refresh ukurasa au chagua tena AI.")
+                st.error(f"🚨 Kosa la Gemini Chat: {error_message}")
                 
-                # Ulinzi wa Session Reset (Kama chat inasema imefungwa, fungua tena)
+                # Hii inamwambia user afanye reset kwa kuchagua tena
                 if "renewed or restarted" in error_message or "session" in error_message:
                     st.warning("Chat Session imefungwa. Tafadhali chagua tena AI kutoka kwenye dropdown na utume ujumbe upya.")
-                    st.session_state.chat_session = None
+                    st.session_state.chat_session = None # Funga session ili ifunguliwe upya
