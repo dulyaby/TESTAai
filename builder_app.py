@@ -44,7 +44,7 @@ RAG_PROMPT = (
 
 def cleanup_and_transition(new_state):
     """
-    Hufuta historia ya chat na kuanzisha awamu mpya kwa usafi. 
+    Hufuta historia ya chat na kuanzisha awamu mpya kwa usafi.
     Hii inasaidia kuzuia makosa ya state management ya Streamlit.
     """
     st.session_state.app_state = new_state
@@ -54,17 +54,16 @@ def cleanup_and_transition(new_state):
         st.session_state.chat_history = []
         st.session_state.intro_questions_count = 0
     
-    st.rerun()
+    # HAPA ndipo tulipoondoa st.rerun() ili kuzuia Index Error
+    # st.rerun() inaitwa nje ya function hii sasa.
 
 def upload_file_to_gemini(uploaded_file):
     """Hupakia faili kwenye Gemini File API na kurejesha File Object kwa kutumia BytesIO."""
     st.info(f"⚡ Inapakia faili '{uploaded_file.name}' kwa ajili ya kuchambuliwa. Tafadhali subiri...")
     try:
-        # Rudi mwanzo wa faili kwa ajili ya kusoma tena (muhimu kwa Streamlit)
         uploaded_file.seek(0)
         file_bytes = uploaded_file.read()
         
-        # Jaribu tena mara 3
         for _ in range(3):
             try:
                 gemini_file = client.files.upload(
@@ -100,4 +99,202 @@ def get_gemini_response(current_prompt, file_object, history):
 
     # Ikiwa kuna faili (State 3), ongeza kwenye content ya mwisho ya user
     if file_object is not None and len(contents) > 0:
-        last_user_content =
+        last_user_content = contents[-1] 
+        if file_object not in last_user_content.parts:
+            last_user_content.parts.insert(0, file_object)
+            contents[-1] = last_user_content 
+        
+    
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=contents,
+            config=config
+        )
+    except Exception as e:
+        st.error(f"🚨 Kosa la API: Kushindwa kuwasiliana na Gemini. {e}")
+        return "Samahani, AI imeshindwa kujibu swali hili kutokana na kosa la mawasiliano. Tafadhali jaribu tena."
+    
+    # ULINZI DHIDI YA RESPONSE TUPU/KOSA
+    if response.text:
+        return response.text
+    else:
+        st.error("🚨 Kosa la API: Gemini imerudisha jibu tupu. Huenda ombi lilikuwa refu au gumu sana.")
+        return "Samahani, AI imeshindwa kujibu swali hili kwa sasa. Tafadhali jaribu tena."
+
+def generate_final_ai_prompt(gemini_file):
+    """Huzalisha Prompt ya mwisho ya AI kwa kutumia PDF iliyopakuliwa."""
+    st.info("⚡ Inazalisha System Prompt ya mwisho ya AI kwa kutumia taarifa zote...")
+    
+    analysis_prompt = (
+        "Chambua kwa kina taarifa muhimu za biashara hii kutoka kwenye faili lililopakuliwa. "
+        "Kisha, kwa kutumia taarifa hizo, **tengeneza System Prompt kamili (Final AI Prompt)** "
+        "ambayo inaweza kutumiwa moja kwa moja kuendesha AI ya Huduma kwa Wateja. "
+        "Prompt hii inapaswa kuwa fupi, kali, na ieleze JINA LA BIASHARA, ROLE YA AI, na MWELEKEO WA MAZUNGUMZO. "
+        "Anza jibu lako na prompt hiyo kamili."
+    )
+    
+    analysis_content = [
+        types.Content(role="user", parts=[
+            types.Part.from_text(analysis_prompt),
+            gemini_file 
+        ])
+    ]
+
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.5-flash', 
+            contents=analysis_content
+        )
+        
+        if response.text:
+            return response.text
+        else:
+            st.error("🚨 Kosa: Gemini imerudisha jibu tupu wakati wa kuzalisha Final Prompt.")
+            return "Imeshindwa kuzalisha Final Prompt kwa sababu ya kosa la mawasiliano."
+            
+    except Exception as e:
+        st.error(f"Kosa la Kuzalisha Final Prompt: {e}")
+        return "Imeshindwa kuzalisha Final Prompt."
+
+# ----------------- STREAMLIT UI -----------------
+
+st.set_page_config(page_title="Aura AI: Mjenzi wa AI", layout="wide")
+
+# Angalia URL Parameter (Kwa AI Iliyoundwa - State 4)
+query_params = st.query_params
+if 'final_ai_mode' in query_params and query_params['final_ai_mode'] == 'true':
+    st.session_state.app_state = 4
+    st.session_state.current_prompt = RAG_PROMPT 
+    st.session_state.gemini_file = None 
+    
+    ai_name = query_params.get('ai_name', 'Mchambuzi wa Biashara')
+    
+    if 'final_ai_chat_history' not in st.session_state:
+        st.session_state.final_ai_chat_history = []
+        st.session_state.final_ai_chat_history.append(("assistant", f"Karibu! Mimi ni **{ai_name}**, AI maalum niliyefunzwa kwa nyaraka za biashara yako. Unaweza kuanza kuuliza maswali yote kuhusu huduma/bidhaa zako."))
+        
+    st.session_state.chat_history = st.session_state.final_ai_chat_history
+    st.title(f"🤖 AI Yako Iliyoundwa: {ai_name}")
+    st.subheader("Una chat na AI iliyoundwa kutokana na maelezo ya PDF.")
+    
+# ----------------- HALI ZA MWANZO/DEFAULT -----------------
+# Hakikisha keys zote zipo
+if 'app_state' not in st.session_state: st.session_state.app_state = 1
+if 'chat_history' not in st.session_state: st.session_state.chat_history = []
+if 'gemini_file' not in st.session_state: st.session_state.gemini_file = None
+if 'final_ai_prompt_text' not in st.session_state: st.session_state.final_ai_prompt_text = None
+if 'current_prompt' not in st.session_state: st.session_state.current_prompt = INTRO_PROMPT
+if 'chat_title' not in st.session_state: st.session_state.chat_title = "Aura - Msaidizi wa AI"
+if 'intro_questions_count' not in st.session_state: st.session_state.intro_questions_count = 0
+
+if st.session_state.app_state != 4:
+    st.title("✨ Aura AI: Jenga AI Yako Kutoka kwa Nyaraka")
+    st.subheader("Utangulizi, Elimu, na Kujenga AI kwa Kutumia Nyaraka za Biashara.")
+
+
+# --- KUANZISHA MAZUNGUMZO (INTRO GREETING) ---
+if st.session_state.app_state == 1 and len(st.session_state.chat_history) == 0:
+    intro_message = "Habari! Mimi naitwa **Aura**, na mimi ni msaidizi wako katika safari ya kujenga AI maalum kwa ajili ya biashara yako. Kwanza, unaweza kuniuliza maswali kuhusu **umuhimu wa kutumia AI** kwenye biashara yako."
+    st.session_state.chat_history.append(("assistant", intro_message))
+
+
+# ----------------------------------------------
+# KIPENGELE KIKUU CHA CHAT
+# ----------------------------------------------
+st.markdown("---")
+if st.session_state.app_state not in [4, 6]:
+    st.header(f"💬 Chat na {st.session_state.chat_title}")
+
+# 1. Onyesha Historia ya Chat
+for role, text in st.session_state.chat_history:
+    with st.chat_message(role):
+        st.markdown(text)
+
+
+# 2. Kuingiza Ujumbe (Input)
+if st.session_state.app_state in [1, 3, 4]: 
+    user_prompt = st.chat_input("Tuma ujumbe kwa AI yako...")
+    
+    if user_prompt:
+        
+        with st.chat_message("user"):
+            st.markdown(user_prompt)
+        
+        st.session_state.chat_history.append(("user", user_prompt))
+        
+        with st.spinner("AI inajibu..."):
+            
+            response_text = get_gemini_response(
+                st.session_state.current_prompt,
+                st.session_state.gemini_file,
+                st.session_state.chat_history
+            )
+            
+            # ----------------- LOGIC YA KUFUATA HATUA -----------------
+            if st.session_state.app_state == 1:
+                st.session_state.intro_questions_count += 1
+                
+                with st.chat_message("assistant"):
+                    st.markdown(response_text)
+                    
+                st.session_state.chat_history.append(("assistant", response_text))
+                
+                # Badilisha awamu baada ya maswali 3
+                if st.session_state.intro_questions_count >= 3 and not "Samahani, AI imeshindwa kujibu" in response_text:
+                    final_intro = (
+                        "\n\n**Asante kwa maswali mazuri!** Sasa kwa kuwa umeelewa umuhimu wa AI, "
+                        "tuanze kuijenga AI yako maalum. Tafadhali **pakia faili la taarifa za biashara yako** (PDF, DOCX, n.k.) hapo chini."
+                    )
+                    st.session_state.chat_history.append(("assistant", final_intro))
+                    cleanup_and_transition(2) 
+                    st.rerun() # <<< Rerun hapa baada ya kuongeza ujumbe wa mwisho
+
+            elif st.session_state.app_state == 3:
+                
+                with st.chat_message("assistant"):
+                    st.markdown(response_text)
+                st.session_state.chat_history.append(("assistant", response_text))
+
+                # Badilisha awamu baada ya maswali 3 ya user (jumla ya messages 8 kwenye chat_history)
+                if len(st.session_state.chat_history) >= 8 and not "Samahani, AI imeshindwa kujibu" in response_text: 
+                    st.session_state.chat_history.append(("assistant", "Naona sasa nimechambua taarifa zako za msingi. Sasa naanza **kuzalisha AI Prompt yako ya mwisho!**"))
+                    cleanup_and_transition(5) 
+                    st.rerun() # <<< Rerun hapa baada ya kuongeza ujumbe wa mwisho
+
+            elif st.session_state.app_state == 4:
+                # Hali ya AI iliyoundwa (Final AI Mode)
+                with st.chat_message("assistant"):
+                    st.markdown(response_text)
+                st.session_state.chat_history.append(("assistant", response_text))
+                
+
+
+# ----------------- KIPENGELE CHA KUPAKIA FAILII (AWAMU YA 2) -----------------
+if st.session_state.app_state == 2:
+    st.markdown("---")
+    st.header("Upload File (PDF)")
+    
+    uploaded_file = st.file_uploader(
+        "Pakia Nyaraka za Biashara (PDF, DOCX, au TXT):", 
+        type=["pdf", "txt", "docx", "pptx"],
+        accept_multiple_files=False,
+        key="file_uploader_key"
+    )
+
+    if uploaded_file is not None and st.session_state.gemini_file is None:
+        st.session_state.gemini_file = upload_file_to_gemini(uploaded_file)
+        
+        if st.session_state.gemini_file:
+            st.session_state.chat_title = uploaded_file.name + " (Mchambuzi)"
+            st.session_state.current_prompt = RAG_PROMPT 
+            
+            pdf_intro = f"✅ Hongera! Faili **{uploaded_file.name}** limepakuliwa. Sasa unaweza **kuuliza maswali kuhusu taarifa zilizomo kwenye faili** ili kuhakikisha ninazielewa vizuri kabla ya ujenzi wa AI."
+            st.session_state.chat_history.append(("assistant", pdf_intro))
+            
+            cleanup_and_transition(3) 
+            st.rerun() # <<< Rerun hapa baada ya kupakia faili
+            
+# ----------------- KIPENGELE CHA KUZALISHA LINK (AWAMU YA 5) -----------------
+if st.session_state.app_state == 5:
+    st.markdown
