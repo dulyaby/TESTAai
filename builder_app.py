@@ -45,7 +45,6 @@ RAG_PROMPT = (
 def cleanup_and_transition(new_state):
     """
     Hufuta historia ya chat na kuanzisha awamu mpya kwa usafi.
-    Hii inasaidia kuzuia makosa ya state management ya Streamlit.
     """
     st.session_state.app_state = new_state
     
@@ -54,9 +53,6 @@ def cleanup_and_transition(new_state):
         st.session_state.chat_history = []
         st.session_state.intro_questions_count = 0
     
-    # HAPA ndipo tulipoondoa st.rerun() ili kuzuia Index Error
-    # st.rerun() inaitwa nje ya function hii sasa.
-
 def upload_file_to_gemini(uploaded_file):
     """Hupakia faili kwenye Gemini File API na kurejesha File Object kwa kutumia BytesIO."""
     st.info(f"⚡ Inapakia faili '{uploaded_file.name}' kwa ajili ya kuchambuliwa. Tafadhali subiri...")
@@ -93,8 +89,10 @@ def get_gemini_response(current_prompt, file_object, history):
     
     for role, text in history:
         gemini_role = 'user' if role == 'user' else 'model'
+        # --- MAREKEBISHO HAPA KUONDOA KOSA LA TypeError ---
+        # Tunatumia types.Part(text=text)
         contents.append(
-            types.Content(role=gemini_role, parts=[types.Part.from_text(text)])
+            types.Content(role=gemini_role, parts=[types.Part(text=text)])
         )
 
     # Ikiwa kuna faili (State 3), ongeza kwenye content ya mwisho ya user
@@ -134,9 +132,12 @@ def generate_final_ai_prompt(gemini_file):
         "Anza jibu lako na prompt hiyo kamili."
     )
     
+    # --- MAREKEBISHO HAPA KUONDOA KOSA LA TypeError ---
+    text_part = types.Part(text=analysis_prompt)
+    
     analysis_content = [
         types.Content(role="user", parts=[
-            types.Part.from_text(analysis_prompt),
+            text_part,
             gemini_file 
         ])
     ]
@@ -248,7 +249,7 @@ if st.session_state.app_state in [1, 3, 4]:
                     )
                     st.session_state.chat_history.append(("assistant", final_intro))
                     cleanup_and_transition(2) 
-                    st.rerun() # <<< Rerun hapa baada ya kuongeza ujumbe wa mwisho
+                    st.rerun() 
 
             elif st.session_state.app_state == 3:
                 
@@ -260,7 +261,7 @@ if st.session_state.app_state in [1, 3, 4]:
                 if len(st.session_state.chat_history) >= 8 and not "Samahani, AI imeshindwa kujibu" in response_text: 
                     st.session_state.chat_history.append(("assistant", "Naona sasa nimechambua taarifa zako za msingi. Sasa naanza **kuzalisha AI Prompt yako ya mwisho!**"))
                     cleanup_and_transition(5) 
-                    st.rerun() # <<< Rerun hapa baada ya kuongeza ujumbe wa mwisho
+                    st.rerun() 
 
             elif st.session_state.app_state == 4:
                 # Hali ya AI iliyoundwa (Final AI Mode)
@@ -293,8 +294,48 @@ if st.session_state.app_state == 2:
             st.session_state.chat_history.append(("assistant", pdf_intro))
             
             cleanup_and_transition(3) 
-            st.rerun() # <<< Rerun hapa baada ya kupakia faili
+            st.rerun() 
             
 # ----------------- KIPENGELE CHA KUZALISHA LINK (AWAMU YA 5) -----------------
 if st.session_state.app_state == 5:
-    st.markdown
+    st.markdown("---")
+    st.header("🎉 AI Deployment Inakamilika!")
+
+    if st.session_state.final_ai_prompt_text is None:
+        final_prompt = generate_final_ai_prompt(st.session_state.gemini_file)
+        st.session_state.final_ai_prompt_text = final_prompt
+        
+    st.success("🤖 Prompt ya AI Imeundwa kwa Mafanikio!")
+    
+    with st.expander("Ona Prompt Iliyoundwa (Final AI Prompt)"):
+        st.code(st.session_state.final_ai_prompt_text, language='markdown')
+
+    # --- KUTENGENEZA LINK YA AI ILIYOKAMILIKA ---
+    ai_name = "AI ya Biashara Yako" 
+    
+    try:
+        base_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}" 
+        if not base_url or "None" in base_url:
+            # Kutumia URL ya sasa ya Streamlit kwa mazingira ya development/local
+            base_url = st.experimental_get_query_params().keys().__next__() if st.experimental_get_query_params() else "http://localhost:8501"
+            base_url = base_url.split('?')[0]
+    except Exception:
+        base_url = "http://localhost:8501" 
+
+    ai_link = base_url + "?" + urllib.parse.urlencode({
+        'final_ai_mode': 'true', 
+        'ai_name': ai_name,
+        'chat_mode': 'final'
+    })
+
+    st.markdown(f"""
+    ## **AI YAKO IMEKAMILIKA!**
+    
+    Aura amemaliza kuchambua nyaraka zako na kuunda AI maalum. Unaweza kuitumia kuanzia sasa!
+    
+    **Link ya AI Yako Hii Hapa:**
+    ### **[{ai_name}]({ai_link})**
+    
+    Bonyeza link hiyo ili kuona AI yako mpya ikifanya kazi!
+    """)
+    st.session_state.app_state = 6 # Imekamilika
