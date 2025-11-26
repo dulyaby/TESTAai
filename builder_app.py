@@ -1,17 +1,22 @@
 import os
 import streamlit as st
+# Imports za Gemini zilizorekebishwa
 from google import genai
+from google.genai import types 
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import datetime
 
 # ----------------- CONFIGURATION -----------------
+# Tumia SQLite (database rahisi ya faili moja)
 SQLALCHEMY_DATABASE_URI = "sqlite:///ai_builder.db"
+
+# Pata Gemini API Key
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not GEMINI_API_KEY:
-    st.error("GEMINI_API_KEY haipatikani kwenye Environment Variables. Tafadhali weka 'GEMINI_API_KEY'.")
+    st.error("🚨 GEMINI_API_KEY haipatikani kwenye Environment Variables. Tafadhali weka 'GEMINI_API_KEY'.")
     st.stop()
     
 # ----------------- DATABASE SETUP -----------------
@@ -31,12 +36,15 @@ engine = create_engine(SQLALCHEMY_DATABASE_URI)
 Base.metadata.create_all(engine) 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+# Initialize Gemini Client
 try:
     client = genai.Client(api_key=GEMINI_API_KEY)
 except Exception as e:
-    st.error(f"Imeshindwa kuunganisha Gemini Client: {e}")
+    st.error(f"🚨 Imeshindwa kuunganisha Gemini Client: {e}")
     st.stop()
 
+
+# ----------------- HELPER FUNCTIONS -----------------
 def generate_ai_role_prompt(data):
     """Hutengeneza AI System Prompt kwa kutumia Gemini"""
     prompt = (
@@ -47,6 +55,7 @@ def generate_ai_role_prompt(data):
         f"Generate a detailed system prompt for this AI that includes its persona, rules, and conversational tone."
     )
     
+    # Huu ni mfumo wa kawaida, hauhitaji config ya mfumo
     response = client.models.generate_content(
         model='gemini-2.5-flash',
         contents=prompt
@@ -67,6 +76,8 @@ if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 if 'selected_ai_prompt' not in st.session_state:
     st.session_state.selected_ai_prompt = None
+if 'last_saved_name' not in st.session_state:
+    st.session_state.last_saved_name = None
 
 # --- KUJENGA FORM ---
 with st.form("ai_builder_form"):
@@ -116,12 +127,10 @@ if submit_button:
                 saved_ai_id = new_ai.id  
                 
             st.success("🎉 AI Builder imetengenezwa na kuhifadhiwa kwa mafanikio!")
-            # Weka prompt mpya kama AI iliyochaguliwa kwa ajili ya kuchat
             st.session_state.selected_ai_prompt = generated_prompt 
-            st.session_state.chat_session = None # Reset chat session
-            st.session_state.chat_history = [] # Futa historia
-            st.session_state.last_saved_name = f"ID #{saved_ai_id}: {business_name} ({ai_role[:20]}...)" # Hifadhi jina
-
+            st.session_state.chat_session = None 
+            st.session_state.chat_history = [] 
+            st.session_state.last_saved_name = f"ID #{saved_ai_id}: {business_name} ({ai_role[:20]}...)" 
             
             with st.expander("Ona AI Prompt Iliyotengenezwa na Gemini"):
                 st.code(generated_prompt, language='markdown')
@@ -133,6 +142,8 @@ if submit_button:
             
         except Exception as e:
             st.error(f"🚨 Kosa la Kujenga/Kuhifadhi AI: {e}")
+            # Futa hali ya sasa ili Streamlit iendelee
+            st.session_state.chat_session = None
             st.stop()
 
 
@@ -148,20 +159,16 @@ try:
     with SessionLocal() as session:
         saved_ais = session.query(AIBuilder).order_by(AIBuilder.creation_date.desc()).all()
         for ai in saved_ais:
-            # Unda dictionary ya kuchagua
             option_name = f"ID #{ai.id}: {ai.business_name} ({ai.ai_role[:30]}...)"
             ai_options[option_name] = ai.ai_prompt
 except Exception:
-    pass # Acha iendelee hata kama database imeshindwa
+    pass 
 
 # 1. Selector ya AI
-# Chagua default value kulingana na AI iliyoundwa mwisho
 default_index = 0
 if 'last_saved_name' in st.session_state and st.session_state.last_saved_name in ai_options:
     default_index = list(ai_options.keys()).index(st.session_state.last_saved_name)
-elif len(ai_options) > 0:
-    default_index = 0
-else:
+elif len(ai_options) == 0:
     st.info("Tafadhali unda AI kwanza kwa kujaza fomu hapo juu ili kuanzisha mazungumzo.")
 
 if len(ai_options) > 0:
@@ -173,20 +180,26 @@ if len(ai_options) > 0:
     )
 
     if selected_ai_name:
-        # Set the selected prompt for the chat
         selected_prompt = ai_options[selected_ai_name]
         
         # Kuanzisha Chat Session mpya na System Prompt
-        # Hii inafanya reset kila ukibadilisha AI kwenye selectbox
         if st.session_state.chat_session is None or st.session_state.selected_ai_prompt != selected_prompt:
             
             st.session_state.selected_ai_prompt = selected_prompt
-            # Tengeneza chat mpya yenye system instruction (AI Prompt yako)
+            
+            # --- HII NDIO SEHEMU ILIYOREKEBISHWA KWA AJILI YA SYSTEM INSTRUCTION ---
+            
+            # Unda Configuration kwa ajili ya System Instruction
+            config = types.GenerateContentConfig(
+                system_instruction=selected_prompt
+            )
+            
+            # Anzisha Chat kwa kutumia config
             st.session_state.chat_session = client.chats.create(
                 model='gemini-2.5-flash',
-                system_instruction=selected_prompt # Hii ndiyo AI Prompt yako!
+                config=config # Tunatuma configuration badala ya system_instruction moja kwa moja
             )
-            # Futa historia tu pale session inapobadilika
+            
             st.session_state.chat_history = [] 
             st.info(f"Chat Session mpya imeanzishwa na AI: **{selected_ai_name}**")
 
@@ -205,6 +218,7 @@ if len(ai_options) > 0:
             
             # Tuma ujumbe kwa Gemini
             try:
+                # Hakikisha tumetumia chat session iliyoundwa vizuri
                 response = st.session_state.chat_session.send_message(user_prompt)
                 
                 # Onyesha jibu la AI
@@ -216,4 +230,4 @@ if len(ai_options) > 0:
                 st.session_state.chat_history.append(("assistant", response.text))
                 
             except Exception as e:
-                st.error(f"Kosa la Gemini Chat: {e}")
+                st.error(f"🚨 Kosa la Gemini Chat: {e}")
