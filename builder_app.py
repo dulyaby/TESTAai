@@ -60,11 +60,13 @@ def upload_file_to_gemini(uploaded_file):
         uploaded_file.seek(0)
         file_bytes = uploaded_file.read()
         
+        # Jaribu mara 3
         for _ in range(3):
             try:
+                # --- MAREKEBISHO HAPA KUONDOA KOSA LA 'display_name' ---
                 gemini_file = client.files.upload(
                     file=BytesIO(file_bytes),
-                    display_name=uploaded_file.name
+                    # display_name=uploaded_file.name # Imefutwa
                 )
                 return gemini_file
             except Exception as e:
@@ -78,7 +80,7 @@ def upload_file_to_gemini(uploaded_file):
 
 def get_gemini_response(current_prompt, file_object, history):
     """
-    Hutuma ombi la stateless kwa Gemini. Inajumuisha uhakiki wa jibu tupu (kuepusha list index out of range).
+    Hutuma ombi la stateless kwa Gemini.
     """
     
     config = types.GenerateContentConfig(
@@ -89,8 +91,7 @@ def get_gemini_response(current_prompt, file_object, history):
     
     for role, text in history:
         gemini_role = 'user' if role == 'user' else 'model'
-        # --- MAREKEBISHO HAPA KUONDOA KOSA LA TypeError ---
-        # Tunatumia types.Part(text=text)
+        # Kutumia types.Part(text=text) kurekebisha kosa la awali la TypeError
         contents.append(
             types.Content(role=gemini_role, parts=[types.Part(text=text)])
         )
@@ -132,7 +133,6 @@ def generate_final_ai_prompt(gemini_file):
         "Anza jibu lako na prompt hiyo kamili."
     )
     
-    # --- MAREKEBISHO HAPA KUONDOA KOSA LA TypeError ---
     text_part = types.Part(text=analysis_prompt)
     
     analysis_content = [
@@ -283,7 +283,17 @@ if st.session_state.app_state == 2:
         key="file_uploader_key"
     )
 
+    # Ukubwa wa Faili (Kuepuka API Errors)
+    MAX_FILE_SIZE_MB = 90  
+    
     if uploaded_file is not None and st.session_state.gemini_file is None:
+        file_size_mb = uploaded_file.size / (1024 * 1024)
+        
+        if file_size_mb > MAX_FILE_SIZE_MB:
+            st.error(f"🚨 Kosa: Ukubwa wa faili ({file_size_mb:.2f} MB) unazidi ukomo unaokubalika wa {MAX_FILE_SIZE_MB} MB. Tafadhali pakia faili dogo.")
+            st.stop()
+        
+        # Endelea kupakia faili
         st.session_state.gemini_file = upload_file_to_gemini(uploaded_file)
         
         if st.session_state.gemini_file:
@@ -316,7 +326,6 @@ if st.session_state.app_state == 5:
     try:
         base_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}" 
         if not base_url or "None" in base_url:
-            # Kutumia URL ya sasa ya Streamlit kwa mazingira ya development/local
             base_url = st.experimental_get_query_params().keys().__next__() if st.experimental_get_query_params() else "http://localhost:8501"
             base_url = base_url.split('?')[0]
     except Exception:
