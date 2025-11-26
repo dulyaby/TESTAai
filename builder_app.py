@@ -8,18 +8,11 @@ import datetime
 from sqlalchemy.exc import OperationalError
 
 # ----------------- CONFIGURATION -----------------
-# Badilisha muunganisho wa DB: Tumia SQLite kama faili moja.
-# Hii inarekebisha kosa la psycopg2.
-# Kwa kutumia Render, unaweza pia kuweka DATABASE_URL ya PostgreSQL hapa kwa urahisi zaidi.
-# Lakini kwa unyenyekevu, tunatumia SQLite.
+# Tumia SQLite (database rahisi ya faili moja)
+# Hii inarekebisha matatizo ya psycopg2 na matatizo ya CORS.
 SQLALCHEMY_DATABASE_URI = "sqlite:///ai_builder.db"
-# Unaweza kutumia Environment Variable uliyoweka hapo awali hivi:
-# database_url = os.getenv("DATABASE_URL") 
-# if database_url:
-#    SQLALCHEMY_DATABASE_URI = database_url.replace("postgres://", "postgresql+psycopg2://")
-# else:
-#    SQLALCHEMY_DATABASE_URI = "sqlite:///ai_builder.db" # Fallback
 
+# Pata Gemini API Key
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not GEMINI_API_KEY:
@@ -40,7 +33,8 @@ class AIBuilder(Base):
 
 # Initialize Engine na Session
 engine = create_engine(SQLALCHEMY_DATABASE_URI)
-Base.metadata.create_all(engine)
+# Inatengeneza meza za DB (kama hazipo)
+Base.metadata.create_all(engine) 
 Session = sessionmaker(bind=engine)
 
 # Initialize Gemini Client
@@ -88,12 +82,14 @@ with st.form("ai_builder_form"):
                             height=100)
 
     st.markdown("### Mawasiliano")
-    contact_phone = st.text_input("Namba ya Simu ya Kuelekeza Wateja (Mfano: 07XX XXX XXX)", placeholder="07XXXXXXX")
+    # Tumia jina rahisi lisilo la phone ili kuepuka ugumu na twilio
+    contact_info = st.text_input("Taarifa za Mawasiliano (Mfano: Namba ya Simu au Email)", placeholder="07XXXXXXX au email@mfano.com")
 
     submit_button = st.form_submit_button("Jenga AI Yangu Sasa!")
 
 if submit_button:
-    if not all([business_name, business_field, ai_role, contact_phone]):
+    # 1. Thibitisha data zote zipo
+    if not all([business_name, business_field, ai_role, contact_info]):
         st.error("Tafadhali jaza sehemu zote zilizo wazi kabla ya kuendelea.")
     else:
         st.info("⚡ Inatengeneza AI Prompt kwa kutumia Gemini...")
@@ -103,25 +99,27 @@ if submit_button:
             "business_name": business_name,
             "business_field": business_field,
             "ai_role": ai_role,
-            "contact_phone": contact_phone
+            "contact_info": contact_info
         }
 
         try:
-            # Piga simu moja kwa moja badala ya kutuma POST request nje
+            # 2. Piga simu Gemini
             generated_prompt = generate_ai_role_prompt(form_data)
 
-            # Hifadhi kwenye Database (SQLite)
-            session = Session()
-            new_ai = AIBuilder(
-                business_name=business_name,
-                business_field=business_field,
-                ai_role=ai_role,
-                ai_prompt=generated_prompt
-            )
-            session.add(new_ai)
-            session.commit()
-            session.close()
-
+            # 3. Hifadhi kwenye Database (FIX YA ATTRIBUTEERROR IPO HAPA)
+            with Session() as session: 
+                new_ai = AIBuilder(
+                    business_name=business_name,
+                    business_field=business_field,
+                    ai_role=ai_role,
+                    ai_prompt=generated_prompt
+                )
+                session.add(new_ai)
+                session.commit()
+                # Pata ID KABLA session haijafungwa
+                saved_ai_id = new_ai.id  
+                
+            # 4. Onyesha Matokeo
             st.success("🎉 AI Builder imetengenezwa na kuhifadhiwa kwa mafanikio!")
             
             with st.expander("Ona AI Prompt Iliyotengenezwa na Gemini"):
@@ -130,30 +128,30 @@ if submit_button:
             st.markdown(f"""
             ---
             **Hatua Inayofuata:** Tumia prompt hii kuweka AI yako kwenye jukwaa la Gumzo (Chatbot) unalolipenda.
-            **ID ya Database:** **#{new_ai.id}**
+            **ID ya Database:** **#{saved_ai_id}**
             """)
             
-        except OperationalError as e:
-            st.error(f"🚨 Kosa la Database: Imeshindwa kuunganisha. Angalia logs. Details: {e}")
         except Exception as e:
-            st.error(f"🚨 Kosa la Kujenga AI: Muunganisho wa Gemini haukufanikiwa. Angalia Logs. Details: {e}")
+            st.error(f"🚨 Kosa la Kujenga/Kuhifadhi AI: {e}")
             st.stop()
 
-# ----------------- DISPLAY SAVED AIS -----------------
+
+# ----------------- DISPLAY SAVED AIS (FIX YA ATTRIBUTEERROR IPO HAPA) -----------------
 st.sidebar.title("AI Zilizohifadhiwa")
 
 try:
-    session = Session()
-    saved_ais = session.query(AIBuilder).order_by(AIBuilder.creation_date.desc()).all()
-    session.close()
+    # Tumia Session tofauti kwa ajili ya Sidebar
+    with Session() as session:
+        saved_ais = session.query(AIBuilder).order_by(AIBuilder.creation_date.desc()).all()
 
-    if saved_ais:
-        st.sidebar.info(f"AI {len(saved_ais)} zimehifadhiwa.")
-        for ai in saved_ais:
-            st.sidebar.markdown(f"**{ai.business_name}** ({ai.business_field})")
-            st.sidebar.markdown(f"*Role:* {ai.ai_role[:30]}...")
-            st.sidebar.markdown("---")
-    else:
-        st.sidebar.markdown("Bado hakuna AI zilizohifadhiwa.")
+        if saved_ais:
+            st.sidebar.info(f"AI {len(saved_ais)} zimehifadhiwa.")
+            for ai in saved_ais:
+                st.sidebar.markdown(f"**{ai.business_name}** ({ai.business_field})")
+                st.sidebar.markdown(f"*Role:* {ai.ai_role[:30]}...")
+                st.sidebar.markdown("---")
+        else:
+            st.sidebar.markdown("Bado hakuna AI zilizohifadhiwa.")
 except Exception as e:
+    # Hii inazuia Streamlit kuanguka
     st.sidebar.warning("Imeshindwa kuonyesha AI zilizohifadhiwa. DB error.")
