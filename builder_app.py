@@ -5,6 +5,7 @@ from google.genai import types
 from io import BytesIO
 import urllib.parse 
 import time
+import mimetypes # <<< IMEONGEZWA KWA AJILI YA MIMETYPE ERROR
 
 # ----------------- CONFIGURATION -----------------
 # Pata Gemini API Key kutoka kwenye Environment Variables
@@ -59,14 +60,23 @@ def upload_file_to_gemini(uploaded_file):
     try:
         uploaded_file.seek(0)
         file_bytes = uploaded_file.read()
-        
-        # Jaribu mara 3
+
+        # --- LOGIC YA MIMETYPE (KUREKEBISHA KOSA LA MIMETYPE) ---
+        mime_type, _ = mimetypes.guess_type(uploaded_file.name)
+        if mime_type is None:
+            # Kutumia mime type mbadala kwa txt/docx ikiwa haiwezi kujua
+            if uploaded_file.name.lower().endswith(('.txt', '.docx')):
+                 mime_type = 'text/plain' 
+            else:
+                raise ValueError("Could not determine file type. Please try PDF, DOCX, or TXT.")
+
+        # 2. Jaribu kupakia mara 3
         for _ in range(3):
             try:
-                # --- MAREKEBISHO HAPA KUONDOA KOSA LA 'display_name' ---
+                # --- HAKUNA display_name (KUREKEBISHA KOSA LA display_name) ---
                 gemini_file = client.files.upload(
                     file=BytesIO(file_bytes),
-                    # display_name=uploaded_file.name # Imefutwa
+                    mime_type=mime_type 
                 )
                 return gemini_file
             except Exception as e:
@@ -91,7 +101,7 @@ def get_gemini_response(current_prompt, file_object, history):
     
     for role, text in history:
         gemini_role = 'user' if role == 'user' else 'model'
-        # Kutumia types.Part(text=text) kurekebisha kosa la awali la TypeError
+        # Kutumia types.Part(text=text) (KUREKEBISHA KOSA LA Part.from_text)
         contents.append(
             types.Content(role=gemini_role, parts=[types.Part(text=text)])
         )
@@ -188,6 +198,7 @@ if 'final_ai_prompt_text' not in st.session_state: st.session_state.final_ai_pro
 if 'current_prompt' not in st.session_state: st.session_state.current_prompt = INTRO_PROMPT
 if 'chat_title' not in st.session_state: st.session_state.chat_title = "Aura - Msaidizi wa AI"
 if 'intro_questions_count' not in st.session_state: st.session_state.intro_questions_count = 0
+if 'file_display_name' not in st.session_state: st.session_state.file_display_name = None # <<< Kurekebisha AttributeError
 
 if st.session_state.app_state != 4:
     st.title("✨ Aura AI: Jenga AI Yako Kutoka kwa Nyaraka")
@@ -297,10 +308,13 @@ if st.session_state.app_state == 2:
         st.session_state.gemini_file = upload_file_to_gemini(uploaded_file)
         
         if st.session_state.gemini_file:
-            st.session_state.chat_title = uploaded_file.name + " (Mchambuzi)"
+            # --- Hifadhi Jina la Faili Kwenye Session State (Kurekebisha AttributeError) ---
+            st.session_state.file_display_name = uploaded_file.name # Jina la kuonyesha
+            
+            st.session_state.chat_title = st.session_state.file_display_name + " (Mchambuzi)"
             st.session_state.current_prompt = RAG_PROMPT 
             
-            pdf_intro = f"✅ Hongera! Faili **{uploaded_file.name}** limepakuliwa. Sasa unaweza **kuuliza maswali kuhusu taarifa zilizomo kwenye faili** ili kuhakikisha ninazielewa vizuri kabla ya ujenzi wa AI."
+            pdf_intro = f"✅ Hongera! Faili **{st.session_state.file_display_name}** limepakuliwa. Sasa unaweza **kuuliza maswali kuhusu taarifa zilizomo kwenye faili** ili kuhakikisha ninazielewa vizuri kabla ya ujenzi wa AI."
             st.session_state.chat_history.append(("assistant", pdf_intro))
             
             cleanup_and_transition(3) 
